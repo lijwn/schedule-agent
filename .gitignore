@@ -3,4 +3,9 @@ dist/
 *.log
 .DS_Store
 .env
+.env.local
 *.tsbuildinfo
+
+# User config (copy from config.user.example.ts)
+config.user.ts
+!src/types/config.user.example.ts

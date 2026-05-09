@@ -14,10 +14,11 @@ import {
 import { Agent } from '../core/Agent';
 import { Orchestrator } from '../core/Orchestrator';
 import { CalendarAgent } from './CalendarAgent';
-import { LLMService, createOpenAILLMFromEnv } from '../core/llm';
+import { LLMService, createOpenAILLMFromEnv, createLLMService } from '../core/llm';
 import { LLMIntentParser } from '../core/llm';
 import { LLMResponseGenerator } from '../core/llm';
 import { LLMMessage } from '../core/llm';
+import { getConfig } from '../types/config';
 
 /**
  * Schedule Manager Agent - Main entry point for schedule management.
@@ -53,13 +54,29 @@ export class ScheduleManagerAgent extends Agent {
       enableLLM ? 'llm-powered' : 'rule-based',
     ];
 
+    // Get config
+    const config = getConfig();
+    const shouldUseLLM = enableLLM || config.llm.enabled;
+
     // Initialize LLM services if enabled
-    if (enableLLM) {
+    if (shouldUseLLM) {
       try {
-        this.llm = createOpenAILLMFromEnv();
+        // Try config file first, then fall back to env
+        if (config.llm.apiKey) {
+          this.llm = createLLMService({
+            provider: config.llm.provider,
+            apiKey: config.llm.apiKey,
+            model: config.llm.model,
+            temperature: config.llm.temperature,
+            baseUrl: config.llm.baseUrl,
+          });
+        } else {
+          this.llm = createOpenAILLMFromEnv();
+        }
         this.intentParser = new LLMIntentParser(this.llm);
         this.responseGenerator = new LLMResponseGenerator(this.llm);
-        console.log('[ScheduleManager] LLM mode enabled');
+        this.useLLM = true;
+        console.log(`[ScheduleManager] LLM mode enabled (model: ${config.llm.model})`);
       } catch (error) {
         console.warn('[ScheduleManager] LLM initialization failed, falling back to rule-based:', error);
         this.useLLM = false;
