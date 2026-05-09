@@ -39,13 +39,22 @@ export class OpenAILLM implements LLMService {
    * Generate a completion
    */
   async complete(request: LLMCompletionRequest): Promise<LLMCompletionResponse> {
+    // Transform functions to vLLM/OpenAI v4 compatible format
+    const tools = request.functions?.map(fn => ({
+      type: 'function' as const,
+      function: {
+        name: fn.name,
+        description: fn.description,
+        parameters: fn.parameters,
+      },
+    }));
+
     const response = await this.client.chat.completions.create({
       model: this.config.model,
       messages: request.messages as OpenAI.Chat.ChatCompletionMessageParam[],
       temperature: request.temperature ?? this.config.temperature,
       max_tokens: request.maxTokens ?? this.config.maxTokens,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      tools: request.functions as any,
+      tools: tools as any,
     });
 
     const choice = response.choices[0];
