@@ -1,48 +1,31 @@
 /**
  * Configuration file for Schedule Agent
- * Edit this file to configure your agent
+ * Reads from external config.json file
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
+
 export interface AgentConfig {
-  // LLM Configuration
   llm: {
-    // Enable LLM features (requires API key)
     enabled: boolean;
-    
-    // LLM Provider: 'openai' | 'anthropic' | 'ollama'
     provider: 'openai' | 'anthropic' | 'ollama';
-    
-    // API Key (or set via OPENAI_API_KEY env variable)
     apiKey?: string;
-    
-    // Model to use
     model: string;
-    
-    // Temperature (0-1)
     temperature: number;
-    
-    // Base URL (for proxies or custom endpoints)
     baseUrl?: string;
   };
-  
-  // Agent Configuration
   agent: {
-    // Default timeout for agent responses (ms)
     timeout: number;
-    
-    // Max conversation history length
     maxHistoryLength: number;
   };
 }
 
-/**
- * Default configuration
- */
-export const defaultConfig: AgentConfig = {
+const DEFAULT_CONFIG: AgentConfig = {
   llm: {
-    enabled: false,  // Set to true to enable LLM
+    enabled: false,
     provider: 'openai',
-    apiKey: undefined,  // Set your API key here, or use OPENAI_API_KEY env
+    apiKey: undefined,
     model: 'gpt-4o-mini',
     temperature: 0.7,
     baseUrl: undefined,
@@ -54,26 +37,48 @@ export const defaultConfig: AgentConfig = {
 };
 
 /**
- * Get configuration (merges with defaults)
+ * Get config from external config.json file
  */
 export function getConfig(): AgentConfig {
-  // Try to load from config file, fall back to defaults
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const userConfig = require('./config.user');
+    const configPath = path.resolve(process.cwd(), 'config.json');
+    
+    if (fs.existsSync(configPath)) {
+      const fileContent = fs.readFileSync(configPath, 'utf-8');
+      const userConfig = JSON.parse(fileContent) as Partial<AgentConfig>;
+      
+      return {
+        ...DEFAULT_CONFIG,
+        ...userConfig,
+        llm: {
+          ...DEFAULT_CONFIG.llm,
+          ...(userConfig.llm || {}),
+          // Environment variables override config file
+          apiKey: process.env.OPENAI_API_KEY || userConfig.llm?.apiKey,
+        },
+        agent: {
+          ...DEFAULT_CONFIG.agent,
+          ...(userConfig.agent || {}),
+        },
+      };
+    }
+  } catch (error) {
+    console.warn('[Config] Failed to load config.json, using defaults:', error);
+  }
+  
+  // Fallback to environment variables only
+  if (process.env.OPENAI_API_KEY) {
     return {
-      ...defaultConfig,
-      ...userConfig,
+      ...DEFAULT_CONFIG,
       llm: {
-        ...defaultConfig.llm,
-        ...(userConfig.llm || {}),
-      },
-      agent: {
-        ...defaultConfig.agent,
-        ...(userConfig.agent || {}),
+        ...DEFAULT_CONFIG.llm,
+        enabled: true,
+        apiKey: process.env.OPENAI_API_KEY,
+        model: process.env.OPENAI_MODEL || DEFAULT_CONFIG.llm.model,
+        baseUrl: process.env.OPENAI_BASE_URL,
       },
     };
-  } catch {
-    return defaultConfig;
   }
+  
+  return DEFAULT_CONFIG;
 }

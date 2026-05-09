@@ -1,0 +1,14 @@
+{
+  "llm": {
+    "enabled": false,
+    "provider": "openai",
+    "apiKey": "",
+    "model": "gpt-4o-mini",
+    "temperature": 0.7,
+    "baseUrl": ""
+  },
+  "agent": {
+    "timeout": 30000,
+    "maxHistoryLength": 50
+  }
+}

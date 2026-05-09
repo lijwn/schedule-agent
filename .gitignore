@@ -6,6 +6,6 @@ dist/
 .env.local
 *.tsbuildinfo
 
-# User config (copy from config.user.example.ts)
-config.user.ts
-!src/types/config.user.example.ts
+# User configuration (contains sensitive API key)
+config.json
+!config.json.example
