@@ -1,37 +1,78 @@
 /**
  * LLM-powered Intent Parser
- * Uses LLM to parse user intent from natural language
+ * Uses LLM function calling to parse user intent
  */
 
 import {
   LLMService,
   LLMMessage,
   LLMIntentResult,
+  LLMFunction,
 } from '../../types/llm';
-import { ScheduleIntent } from '../../types';
 
 const INTENT_SYSTEM_PROMPT = `你是一个日程管理助手，负责理解用户的意图。
 
-用户的输入可能是中文或英文，你需要识别以下意图：
+用户输入可能是中文或英文，你需要识别以下意图：
 - create-event: 创建新日程
-- update-event: 修改现有日程  
+- update-event: 修改现有日程
 - delete-event: 删除日程
 - query-events: 查询/查看日程
 - set-reminder: 设置提醒
 
-从用户输入中提取以下参数：
+从用户输入中提取参数：
 - title: 日程标题
 - description: 日程描述
-- startTime: 开始时间 (如 "明天下午3点")
+- startTime: 开始时间
 - endTime: 结束时间
 - location: 地点
-- eventId: 日程ID（仅用于更新/删除/提醒）
+- eventId: 日程ID（仅用于更新/删除/提醒）`;
 
-重要：请直接返回JSON格式，不要有任何其他内容。格式如下：
-{"intent": "意图", "confidence": 0.9, "parameters": {"title": "标题", "startTime": "时间"}, "missingInfo": [], "reasoning": "解释"}`;
+// Function calling format for MiniMax/OpenAI compatible APIs
+const INTENT_FUNCTION: LLMFunction = {
+  name: 'parse_intent',
+  description: 'Parse user intent for schedule management',
+  parameters: {
+    type: 'object',
+    properties: {
+      intent: {
+        type: 'string',
+        enum: ['create-event', 'update-event', 'delete-event', 'query-events', 'set-reminder'],
+        description: 'The detected user intent',
+      },
+      confidence: {
+        type: 'number',
+        minimum: 0,
+        maximum: 1,
+        description: 'Confidence score for the intent (0-1)',
+      },
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'Event title' },
+          description: { type: 'string', description: 'Event description' },
+          startTime: { type: 'string', description: 'Start time' },
+          endTime: { type: 'string', description: 'End time' },
+          location: { type: 'string', description: 'Location' },
+          eventId: { type: 'string', description: 'Event ID' },
+          attendees: { type: 'array', items: { type: 'string' }, description: 'Attendees' },
+        },
+      },
+      missingInfo: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Missing information needed',
+      },
+      reasoning: {
+        type: 'string',
+        description: 'Explanation of the intent detection',
+      },
+    },
+    required: ['intent', 'confidence', 'parameters', 'missingInfo'],
+  },
+};
 
 /**
- * LLM-powered Intent Parser (no function calling)
+ * LLM-powered Intent Parser with Function Calling
  */
 export class LLMIntentParser {
   private llm: LLMService;
@@ -41,48 +82,77 @@ export class LLMIntentParser {
   }
 
   /**
-   * Parse user intent using LLM (without function calling)
+   * Parse user intent using LLM function calling
    */
   async parse(userMessage: string): Promise<LLMIntentResult> {
     const messages: LLMMessage[] = [
       { role: 'system', content: INTENT_SYSTEM_PROMPT },
       {
         role: 'user',
-        content: `请分析以下用户输入的意图：\n\n"${userMessage}"\n\n直接返回JSON，不要其他内容。`,
+        content: `分析以下用户输入的意图："${userMessage}"`,
       },
     ];
 
+    // Try with function calling first
     try {
-      // Don't use functions - some APIs don't support it
       const response = await this.llm.complete({
         messages,
+        functions: [INTENT_FUNCTION],
         temperature: 0.3,
-        maxTokens: 500,
+        maxTokens: 1000,
       });
 
-      // Try to parse the response as JSON
-      const content = response.content.trim();
-      
-      // Extract JSON from response (handle cases where LLM adds extra text)
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        return {
-          intent: parsed.intent as LLMIntentResult['intent'],
-          confidence: parsed.confidence || 0.5,
-          parameters: parsed.parameters || {},
-          missingInfo: parsed.missingInfo || [],
-          reasoning: parsed.reasoning || '',
-        };
+      console.log('[IntentParser] LLM response:', response);
+
+      // Handle function call response
+      if (response.functionCall) {
+        try {
+          const args = JSON.parse(response.functionCall.arguments);
+          console.log('[IntentParser] Function call args:', args);
+          return {
+            intent: args.intent as LLMIntentResult['intent'],
+            confidence: args.confidence || 0.9,
+            parameters: args.parameters || {},
+            missingInfo: args.missingInfo || [],
+            reasoning: args.reasoning || '',
+          };
+        } catch (parseError) {
+          console.error('[IntentParser] Failed to parse function arguments:', parseError);
+        }
       }
 
-      // If JSON parsing fails, use fallback
-      console.warn('[IntentParser] Failed to parse LLM response as JSON, using fallback');
-      return this.fallbackParse(userMessage);
+      // If no function call, try to parse content as JSON
+      if (response.content) {
+        try {
+          const jsonMatch = response.content.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            return this.normalizeResult(parsed);
+          }
+        } catch {
+          // Fall through to fallback
+        }
+      }
     } catch (error) {
-      console.error('[IntentParser] LLM call failed, using fallback:', error);
-      return this.fallbackParse(userMessage);
+      console.error('[IntentParser] Function calling failed:', error);
     }
+
+    // Final fallback to rule-based
+    console.log('[IntentParser] Using fallback rule-based parsing');
+    return this.fallbackParse(userMessage);
+  }
+
+  /**
+   * Normalize LLM response to standard format
+   */
+  private normalizeResult(parsed: Record<string, unknown>): LLMIntentResult {
+    return {
+      intent: (parsed.intent as LLMIntentResult['intent']) || 'query-events',
+      confidence: (parsed.confidence as number) || 0.5,
+      parameters: (parsed.parameters as Record<string, unknown>) || {},
+      missingInfo: (parsed.missingInfo as string[]) || [],
+      reasoning: (parsed.reasoning as string) || '',
+    };
   }
 
   /**
@@ -90,57 +160,44 @@ export class LLMIntentParser {
    */
   private fallbackParse(task: string): LLMIntentResult {
     const lowerTask = task.toLowerCase();
-    let intent: LLMIntentResult['intent'] = 'unknown';
+    let intent: LLMIntentResult['intent'] = 'query-events';
     const missingInfo: string[] = [];
     const parameters: LLMIntentResult['parameters'] = {};
 
-    // Extract time patterns
-    const timeMatch = task.match(/(\d{1,2})[点时:]+(\d{1,2})?|((?:今天|明天|后天|周一|周二|周三|周四|周五|周六|周日|周[一二三四五六日])[上下午]?[^\s]{0,5})/);
+    // Extract time
+    const timeMatch = task.match(/(\d{1,2})[点时:]+(\d{1,2})?|((?:今天|明天|后天|周一|周二|周三|周四|周五|周六|周日)[^\s]{0,8})/);
     if (timeMatch) {
       parameters.startTime = timeMatch[0];
     }
 
-    // Extract title (between quotes or after specific patterns)
+    // Extract title
     const titleMatch = task.match(/["「]([^"」]+)["」]|(?:安排|创建|新建)(.+?)(?:会议|日程|在|$)/);
     if (titleMatch) {
       parameters.title = titleMatch[1] || titleMatch[2];
     }
 
     // Extract location
-    const locationMatch = task.match(/在(\S+?)(?:召开|举行|进行|的|召开)/);
+    const locationMatch = task.match(/在(\S+?)(?:召开|举行|进行|的|地点)/);
     if (locationMatch) {
       parameters.location = locationMatch[1];
     }
 
-    // Detect create event
-    if (/创建|新建|安排|添加|add|create|新建日程/i.test(task)) {
+    // Detect intent
+    if (/创建|新建|安排|添加|add|create/i.test(task)) {
       intent = 'create-event';
       if (!parameters.title) missingInfo.push('title');
       if (!parameters.startTime) missingInfo.push('startTime');
-    }
-    // Detect query events
-    else if (/查询|查看|显示|列出|有哪些|query|list|show|我的日程/i.test(task)) {
+    } else if (/查询|查看|显示|列出|有哪些|我的日程/i.test(task)) {
       intent = 'query-events';
-    }
-    // Detect update event
-    else if (/更新|修改|编辑|改|update|edit|修改日程/i.test(task)) {
+    } else if (/更新|修改|编辑|改|update|edit/i.test(task)) {
       intent = 'update-event';
       if (!parameters.eventId) missingInfo.push('eventId');
-    }
-    // Detect delete event
-    else if (/删除|取消|remove|delete|删除日程/i.test(task)) {
+    } else if (/删除|取消|remove|delete/i.test(task)) {
       intent = 'delete-event';
       if (!parameters.eventId) missingInfo.push('eventId');
-    }
-    // Detect reminder
-    else if (/提醒|闹钟|reminder|提醒我/i.test(task)) {
+    } else if (/提醒|闹钟|reminder/i.test(task)) {
       intent = 'set-reminder';
       if (!parameters.eventId) missingInfo.push('eventId');
-    }
-
-    // Default to query if unknown
-    if (intent === 'unknown') {
-      intent = 'query-events';
     }
 
     return {
@@ -148,7 +205,7 @@ export class LLMIntentParser {
       confidence: missingInfo.length === 0 ? 0.9 : 0.5,
       parameters,
       missingInfo,
-      reasoning: 'Fallback rule-based parsing used due to LLM failure',
+      reasoning: 'Fallback rule-based parsing',
     };
   }
 }
