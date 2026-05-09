@@ -14,6 +14,10 @@ import {
 import { Agent } from '../core/Agent';
 import { Orchestrator } from '../core/Orchestrator';
 import { CalendarAgent } from './CalendarAgent';
+import { LLMService, createOpenAILLMFromEnv } from '../core/llm';
+import { LLMIntentParser } from '../core/llm';
+import { LLMResponseGenerator } from '../core/llm';
+import { LLMMessage } from '../core/llm';
 
 /**
  * Schedule Manager Agent - Main entry point for schedule management.
@@ -25,8 +29,12 @@ import { CalendarAgent } from './CalendarAgent';
 export class ScheduleManagerAgent extends Agent {
   private orchestrator: Orchestrator;
   private conversationHistory: AgentMessage[] = [];
+  private llm: LLMService | null = null;
+  private intentParser: LLMIntentParser | null = null;
+  private responseGenerator: LLMResponseGenerator | null = null;
+  private useLLM: boolean = false;
 
-  constructor(orchestrator: Orchestrator) {
+  constructor(orchestrator: Orchestrator, enableLLM: boolean = false) {
     super(
       'schedule-manager',
       'Schedule Manager Agent',
@@ -35,12 +43,28 @@ export class ScheduleManagerAgent extends Agent {
     );
 
     this.orchestrator = orchestrator;
+    this.useLLM = enableLLM;
+
     this._capabilities = [
       'intent-classification',
       'agent-dispatching',
       'natural-language-understanding',
       'response-aggregation',
+      enableLLM ? 'llm-powered' : 'rule-based',
     ];
+
+    // Initialize LLM services if enabled
+    if (enableLLM) {
+      try {
+        this.llm = createOpenAILLMFromEnv();
+        this.intentParser = new LLMIntentParser(this.llm);
+        this.responseGenerator = new LLMResponseGenerator(this.llm);
+        console.log('[ScheduleManager] LLM mode enabled');
+      } catch (error) {
+        console.warn('[ScheduleManager] LLM initialization failed, falling back to rule-based:', error);
+        this.useLLM = false;
+      }
+    }
 
     // Add system message
     this.conversationHistory.push({
@@ -65,32 +89,79 @@ export class ScheduleManagerAgent extends Agent {
     });
 
     try {
-      // Step 1: Parse user intent
-      const intent = this.parseIntent(request.task);
-      console.log(`[ScheduleManager] Detected intent: ${intent.intent} (confidence: ${intent.intent})`);
+      // Step 1: Parse user intent (LLM or rule-based)
+      let intent: ParsedIntent;
+      
+      if (this.useLLM && this.intentParser) {
+        const llmIntent = await this.intentParser.parse(request.task);
+        console.log(`[ScheduleManager] LLM detected intent: ${llmIntent.intent} (confidence: ${llmIntent.confidence})`);
+        intent = {
+          intent: llmIntent.intent as ScheduleIntent,
+          confidence: llmIntent.confidence,
+          extractedParams: llmIntent.parameters as Record<string, unknown>,
+          missingInfo: llmIntent.missingInfo,
+        };
+      } else {
+        intent = this.parseIntent(request.task);
+        console.log(`[ScheduleManager] Rule-based intent: ${intent.intent} (confidence: ${intent.confidence})`);
+      }
 
       // Step 2: If confidence is low, ask for clarification
-      if (intent.intent === 'unknown' || intent.missingInfo.length > 0) {
+      if (intent.intent === 'unknown' || (intent.confidence < 0.5) || intent.missingInfo.length > 0) {
         return this.handleClarification(request, intent);
       }
 
       // Step 3: Dispatch to appropriate sub-agent
-      const response = await this.dispatchToSubAgent(request, intent);
+      const subAgentResponse = await this.dispatchToSubAgent(request, intent);
 
-      // Step 4: Add response to history
+      // Step 4: Generate response (LLM or rule-based)
+      let finalResponse: AgentResponse;
+      
+      if (this.useLLM && this.responseGenerator) {
+        const llmResponse = await this.responseGenerator.generate({
+          userMessage: request.task,
+          intent: intent.intent,
+          toolResult: subAgentResponse.result,
+          conversationHistory: this.getHistoryForLLM(),
+        });
+        
+        finalResponse = this.createSuccessResponse(request.id, {
+          message: llmResponse.response,
+          rawResult: subAgentResponse.result,
+          requiresClarification: llmResponse.shouldAskClarification,
+        });
+      } else {
+        finalResponse = subAgentResponse;
+      }
+
+      // Step 5: Add response to history
+      const responseContent = (finalResponse.result as { message?: string })?.message || this.formatResponse(subAgentResponse);
       this.addToHistory({
         id: `msg-${Date.now()}-response`,
         role: 'assistant',
-        content: this.formatResponse(response),
+        content: responseContent,
         timestamp: new Date(),
         agentId: this.id,
       });
 
-      return response;
+      return finalResponse;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       return this.createErrorResponse(request.id, `Failed to process request: ${errorMessage}`);
     }
+  }
+
+  /**
+   * Get conversation history in LLM format
+   */
+  private getHistoryForLLM(): LLMMessage[] {
+    return this.conversationHistory
+      .filter((msg) => msg.role !== 'system')
+      .slice(-10)
+      .map((msg) => ({
+        role: msg.role === 'user' ? 'user' : 'assistant',
+        content: msg.content,
+      }));
   }
 
   /**

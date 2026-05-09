@@ -11,12 +11,18 @@
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts"
   },
-  "keywords": ["agent", "schedule", "calendar", "multi-agent"],
+  "keywords": [
+    "agent",
+    "schedule",
+    "calendar",
+    "multi-agent"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
     "commander": "^11.1.0",
-    "inquirer": "^9.2.12"
+    "inquirer": "^9.2.12",
+    "openai": "^6.37.0"
   },
   "devDependencies": {
     "@types/inquirer": "^9.0.7",
