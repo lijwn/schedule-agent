@@ -28,7 +28,11 @@ export interface LLMCompletionRequest {
 export interface LLMFunction {
   name: string;
   description: string;
-  parameters: Record<string, unknown>;
+  parameters: {
+    type: 'object';
+    properties: Record<string, unknown>;
+    required?: string[];
+  };
 }
 
 export interface LLMCompletionResponse {
