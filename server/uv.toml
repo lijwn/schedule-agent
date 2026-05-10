@@ -1,0 +1,9 @@
+# uv configuration for Chinese mirror
+
+[[index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
+
+[mirror]
+# Mirror settings - uncomment if needed
+# primary = "https://pypi.tuna.tsinghua.edu.cn/simple"

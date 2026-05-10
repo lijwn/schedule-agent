@@ -16,8 +16,10 @@ dev = [
     "httpx>=0.26.0",
 ]
 
-[tool.uv]
-dev-dependencies = []
+# 清华镜像源
+[[index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
 
 [build-system]
 requires = ["hatchling"]
