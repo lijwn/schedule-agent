@@ -8,7 +8,7 @@
 # - Message forwarding
 # - Online status management
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict
@@ -133,10 +133,10 @@ def verify_session(token: str) -> Optional[str]:
 # ==================== Agent Discovery Endpoints ====================
 
 @app.post("/api/v1/agents/register")
-async def register_agent(data: AgentRegistration, Authorization: str = None):
+async def register_agent(data: AgentRegistration, authorization: str = Header(None)):
     """Register a new agent"""
     # Verify session
-    user_id = verify_session(Authorization or "")
+    user_id = verify_session(authorization or "")
     if not user_id or user_id != data.userId:
         raise HTTPException(status_code=401, detail="Unauthorized")
     
@@ -186,7 +186,7 @@ async def get_agent(agent_id: str):
     return agent
 
 @app.post("/api/v1/agents/{agent_id}/heartbeat")
-async def agent_heartbeat(agent_id: str, Authorization: str = None):
+async def agent_heartbeat(agent_id: str, authorization: str = Header(None)):
     """Agent heartbeat to update online status"""
     agent = agents.get(agent_id)
     if not agent:
@@ -200,10 +200,10 @@ async def agent_heartbeat(agent_id: str, Authorization: str = None):
 # ==================== Messaging Endpoints ====================
 
 @app.post("/api/v1/messages/send")
-async def send_message(data: MessageRequest, Authorization: str = None):
+async def send_message(data: MessageRequest, authorization: str = Header(None)):
     """Send a message to another agent"""
     # Verify sender
-    sender_id = verify_session(Authorization or "")
+    sender_id = verify_session(authorization or "")
     if not sender_id or sender_id != data.senderUserId:
         raise HTTPException(status_code=401, detail="Unauthorized")
     

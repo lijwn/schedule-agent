@@ -10,16 +10,15 @@ dependencies = [
     "pydantic>=2.5.3",
 ]
 
+[project.scripts]
+pfasp-server = "main:app"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
     "httpx>=0.26.0",
 ]
 
-# Disable package building (single script)
-[tool.hatch.build.targets.wheel]
-packages = []
-
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"

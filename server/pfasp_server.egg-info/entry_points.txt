@@ -1,0 +1,2 @@
+[console_scripts]
+pfasp-server = main:app
